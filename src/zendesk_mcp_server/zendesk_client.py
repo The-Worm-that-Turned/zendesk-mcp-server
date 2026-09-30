@@ -228,7 +228,7 @@ class ZendeskClient:
         except Exception as e:
             raise Exception(f"Failed to fetch attachment from {content_url}: {str(e)}")
 
-    def post_comment(self, ticket_id: int, comment: str, public: bool = True) -> str:
+    def post_comment(self, ticket_id: int, comment: str, public: bool = False) -> str:
         """
         Post a comment to an existing ticket.
 

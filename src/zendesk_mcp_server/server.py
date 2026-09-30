@@ -229,8 +229,8 @@ async def handle_list_tools() -> list[types.Tool]:
                     },
                     "public": {
                         "type": "boolean",
-                        "description": "Whether the comment should be public",
-                        "default": True
+                        "description": "Whether the comment should be public (visible to the requester). Defaults to false, which posts an internal note.",
+                        "default": False
                     }
                 },
                 "required": ["ticket_id", "comment"]
@@ -336,7 +336,7 @@ async def handle_call_tool(
         elif name == "create_ticket_comment":
             if not arguments:
                 raise ValueError("Missing arguments")
-            public = arguments.get("public", True)
+            public = arguments.get("public", False)
             result = get_zendesk_client().post_comment(
                 ticket_id=arguments["ticket_id"],
                 comment=arguments["comment"],

@@ -297,7 +297,7 @@ Create a new comment on an existing Zendesk ticket
 - Input:
   - `ticket_id` (integer): The ID of the ticket to comment on
   - `comment` (string): The comment text/content to add
-  - `public` (boolean, optional): Whether the comment should be public (defaults to true)
+  - `public` (boolean, optional): Whether the comment should be public (defaults to false, which posts an internal note)
 
 ### create_ticket
 
