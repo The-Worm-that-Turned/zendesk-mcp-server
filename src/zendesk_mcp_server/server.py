@@ -301,20 +301,15 @@ async def handle_list_tools() -> list[types.Tool]:
                     "type": {"type": "string"},
                     "assignee_id": {"type": "integer"},
                     "requester_id": {"type": "integer"},
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Replaces ALL existing tags on the ticket. To add or remove individual tags without affecting the others, use add_tags or remove_tags instead."
-                    },
                     "add_tags": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Tags to add, keeping the ticket's existing tags. Cannot be combined with tags."
+                        "description": "Tags to add. The ticket's existing tags are kept."
                     },
                     "remove_tags": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Tags to remove, keeping the ticket's other tags. Cannot be combined with tags."
+                        "description": "Tags to remove. The ticket's other tags are kept."
                     },
                     "custom_fields": {"type": "array", "items": {"type": "object"}},
                     "due_at": {"type": "string", "description": "ISO8601 datetime"}

@@ -488,35 +488,39 @@ class ZendeskClient:
 
         Supported fields include common ticket attributes like:
         subject, status, priority, type, assignee_id, requester_id,
-        tags (list[str]), custom_fields (list[dict]), due_at, etc.
+        custom_fields (list[dict]), due_at, etc.
 
-        `tags` replaces the ticket's whole tag list. `add_tags` and
-        `remove_tags` go through Zendesk's tag endpoints instead, so the
-        ticket's other tags are left alone.
+        Tags are changed only through `add_tags` and `remove_tags`, sent as
+        Zendesk's `additional_tags` and `remove_tags` in the same request as
+        any other field changes. `tags` is rejected: Zendesk treats it as a
+        replacement for the whole list, which wipes tags that triggers and
+        Flows depend on.
         """
+        if 'tags' in fields:
+            raise ValueError(
+                "update_ticket does not accept tags, because it replaces every existing tag. "
+                "Use add_tags and remove_tags instead."
+            )
         add_tags = fields.pop('add_tags', None) or []
         remove_tags = fields.pop('remove_tags', None) or []
-        if (add_tags or remove_tags) and fields.get('tags') is not None:
-            raise ValueError("tags cannot be combined with add_tags or remove_tags")
         overlap = set(add_tags) & set(remove_tags)
         if overlap:
             raise ValueError(f"Tags cannot be both added and removed: {', '.join(sorted(overlap))}")
 
         try:
             fields = {k: v for k, v in fields.items() if v is not None}
-            if fields:
-                # Load the ticket, mutate fields directly, and update
-                ticket = self.client.tickets(id=ticket_id)
-                for key, value in fields.items():
-                    setattr(ticket, key, value)
-
-                # This call returns a TicketAudit (not a Ticket). Don't read attrs from it.
-                self.client.tickets.update(ticket)
-
             if add_tags:
-                self.client.tickets.add_tags(ticket_id, add_tags)
+                fields['additional_tags'] = add_tags
             if remove_tags:
-                self.client.tickets.delete_tags(ticket_id, remove_tags)
+                fields['remove_tags'] = remove_tags
+
+            # Load the ticket, mutate fields directly, and update
+            ticket = self.client.tickets(id=ticket_id)
+            for key, value in fields.items():
+                setattr(ticket, key, value)
+
+            # This call returns a TicketAudit (not a Ticket). Don't read attrs from it.
+            self.client.tickets.update(ticket)
 
             # Fetch the fresh ticket to return consistent data
             refreshed = self.client.tickets(id=ticket_id)

@@ -189,75 +189,81 @@ def test_update_ticket_over_oauth(oauth_server):
     assert set(authorization_headers()) == {BEARER}
 
 
+def mock_ticket_update(ticket=TICKET_JSON):
+    responses.add(responses.GET, f"{API}/tickets/42.json", json={"ticket": ticket})
+    responses.add(
+        responses.PUT,
+        f"{API}/tickets/42.json",
+        json={"ticket": ticket, "audit": {"id": 1, "ticket_id": 42, "events": []}},
+    )
+
+
+def sent_ticket():
+    put = [c.request for c in responses.calls if c.request.method == "PUT"]
+    assert len(put) == 1, "every change goes out in a single ticket update"
+    assert put[0].url == f"{API}/tickets/42.json"
+    return json.loads(put[0].body)["ticket"]
+
+
 @responses.activate
 def test_update_ticket_add_tags_keeps_existing_tags(oauth_server):
-    """add_tags uses the tag endpoint rather than overwriting the ticket's tag list."""
-    tagged = {**TICKET_JSON, "tags": ["hardware", "claude-draft-review"]}
-    responses.add(responses.PUT, f"{API}/tickets/42/tags.json", json={"tags": tagged["tags"]})
-    responses.add(responses.GET, f"{API}/tickets/42.json", json={"ticket": tagged})
+    """add_tags becomes additional_tags, which Zendesk merges into the existing list."""
+    mock_ticket_update({**TICKET_JSON, "tags": ["hardware", "claude-draft-review"]})
 
     body = payload_of(
         call_tool(oauth_server, "update_ticket", {"ticket_id": 42, "add_tags": ["claude-draft-review"]})
     )
 
-    tag_put = [c.request for c in responses.calls if c.request.url.endswith("/tickets/42/tags.json")][0]
-    assert tag_put.method == "PUT"
-    assert json.loads(tag_put.body) == {"tags": ["claude-draft-review"]}
-    # No full-ticket PUT, so the existing tags are never overwritten.
-    assert not [c for c in responses.calls if c.request.method == "PUT" and c.request.url.endswith("/tickets/42.json")]
+    sent = sent_ticket()
+    assert sent["additional_tags"] == ["claude-draft-review"]
+    assert "tags" not in sent, "sending tags would overwrite the ticket's existing tags"
     assert body["ticket"]["tags"] == ["hardware", "claude-draft-review"]
     assert set(authorization_headers()) == {BEARER}
 
 
 @responses.activate
-def test_update_ticket_remove_tags_uses_tag_endpoint(oauth_server):
-    responses.add(responses.DELETE, f"{API}/tickets/42/tags.json", json={"tags": []})
-    responses.add(responses.GET, f"{API}/tickets/42.json", json={"ticket": {**TICKET_JSON, "tags": []}})
+def test_update_ticket_remove_tags_sends_remove_tags(oauth_server):
+    mock_ticket_update({**TICKET_JSON, "tags": []})
 
     body = payload_of(
         call_tool(oauth_server, "update_ticket", {"ticket_id": 42, "remove_tags": ["hardware"]})
     )
 
-    tag_delete = [c.request for c in responses.calls if c.request.method == "DELETE"][0]
-    assert tag_delete.url == f"{API}/tickets/42/tags.json"
-    assert json.loads(tag_delete.body) == {"tags": ["hardware"]}
+    sent = sent_ticket()
+    assert sent["remove_tags"] == ["hardware"]
+    assert "tags" not in sent
     assert body["ticket"]["tags"] == []
 
 
 @responses.activate
-def test_update_ticket_fields_and_add_tags_together(oauth_server):
-    """Field changes go through the ticket PUT; tag additions through the tag endpoint."""
-    responses.add(responses.GET, f"{API}/tickets/42.json", json={"ticket": TICKET_JSON})
-    responses.add(
-        responses.PUT,
-        f"{API}/tickets/42.json",
-        json={"ticket": TICKET_JSON, "audit": {"id": 1, "ticket_id": 42, "events": []}},
-    )
-    responses.add(responses.PUT, f"{API}/tickets/42/tags.json", json={"tags": ["hardware", "vip"]})
+def test_update_ticket_fields_and_tag_changes_in_one_request(oauth_server):
+    mock_ticket_update()
 
-    payload_of(
-        call_tool(oauth_server, "update_ticket", {"ticket_id": 42, "status": "pending", "add_tags": ["vip"]})
-    )
+    payload_of(call_tool(
+        oauth_server,
+        "update_ticket",
+        {"ticket_id": 42, "status": "pending", "add_tags": ["vip"], "remove_tags": ["hardware"]},
+    ))
 
-    ticket_put = [c.request for c in responses.calls
-                  if c.request.method == "PUT" and c.request.url.endswith("/tickets/42.json")][0]
-    sent = json.loads(ticket_put.body)["ticket"]
+    sent = sent_ticket()
     assert sent["status"] == "pending"
+    assert sent["additional_tags"] == ["vip"]
+    assert sent["remove_tags"] == ["hardware"]
     assert "tags" not in sent
-    tag_put = [c.request for c in responses.calls if c.request.url.endswith("/tickets/42/tags.json")][0]
-    assert json.loads(tag_put.body) == {"tags": ["vip"]}
+    assert not [c for c in responses.calls if "/tags.json" in c.request.url]
 
 
 @pytest.mark.parametrize(
     "arguments, message",
     [
-        ({"tags": ["a"], "add_tags": ["b"]}, "tags cannot be combined"),
-        ({"tags": ["a"], "remove_tags": ["b"]}, "tags cannot be combined"),
+        ({"tags": ["a"]}, "Use add_tags and remove_tags"),
+        ({"tags": []}, "Use add_tags and remove_tags"),
+        ({"tags": ["a"], "add_tags": ["b"]}, "Use add_tags and remove_tags"),
         ({"add_tags": ["a", "b"], "remove_tags": ["b"]}, "both added and removed: b"),
     ],
 )
 @responses.activate
-def test_update_ticket_rejects_conflicting_tag_arguments(oauth_server, arguments, message):
+def test_update_ticket_rejects_tag_replacement_and_conflicts(oauth_server, arguments, message):
     result = call_tool(oauth_server, "update_ticket", {"ticket_id": 42, **arguments})
 
     assert result[0].text.startswith("Error:")
