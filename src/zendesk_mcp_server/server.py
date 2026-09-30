@@ -173,7 +173,8 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_tickets",
-            description="Fetch the latest tickets with pagination support",
+            description="Fetch the latest tickets with pagination support. "
+            "Descriptions are previews; use get_ticket or get_ticket_comments for full text.",
             inputSchema={
                 "type": "object",
                 "properties": {

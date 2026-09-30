@@ -371,6 +371,33 @@ def test_get_tickets_over_oauth(oauth_server, monkeypatch):
     assert captured["authorization"] == BEARER
 
 
+def test_get_tickets_truncates_long_descriptions(oauth_server, monkeypatch):
+    long = {**TICKET_JSON, "id": 1, "description": "x" * 1000}
+    short = {**TICKET_JSON, "id": 2, "description": "short"}
+    empty = {**TICKET_JSON, "id": 3, "description": None}
+
+    class FakeResponse:
+        def read(self):
+            return json.dumps({"tickets": [long, short, empty], "next_page": None}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: FakeResponse())
+
+    tickets = payload_of(call_tool(oauth_server, "get_tickets", {}))["tickets"]
+
+    assert tickets[0]["description"] == "x" * 300 + "…"
+    assert tickets[0]["description_truncated"] is True
+    assert tickets[1]["description"] == "short"
+    assert tickets[1]["description_truncated"] is False
+    assert tickets[2]["description"] == ""
+    assert tickets[2]["description_truncated"] is False
+
+
 @responses.activate
 def test_permission_error_from_zendesk_is_surfaced_not_masked(oauth_server):
     """

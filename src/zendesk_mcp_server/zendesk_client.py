@@ -302,12 +302,14 @@ class ZendeskClient:
             # Process tickets to return only essential fields
             ticket_list = []
             for ticket in tickets_data:
+                description, truncated = self._description_preview(ticket.get('description'))
                 ticket_list.append({
                     'id': ticket.get('id'),
                     'subject': ticket.get('subject'),
                     'status': ticket.get('status'),
                     'priority': ticket.get('priority'),
-                    'description': ticket.get('description'),
+                    'description': description,
+                    'description_truncated': truncated,
                     'created_at': ticket.get('created_at'),
                     'updated_at': ticket.get('updated_at'),
                     'requester_id': ticket.get('requester_id'),
@@ -331,7 +333,16 @@ class ZendeskClient:
         except Exception as e:
             raise Exception(f"Failed to get latest tickets: {str(e)}")
 
-    SEARCH_DESCRIPTION_LIMIT = 300
+    # Ticket lists carry a preview only. A single description can be tens of
+    # KB (quoted HTML emails full of tracking links), which on a page of 25+
+    # tickets can exceed what the MCP client accepts as a tool result.
+    DESCRIPTION_PREVIEW_LIMIT = 300
+
+    @classmethod
+    def _description_preview(cls, description: str | None) -> tuple[str, bool]:
+        description = description or ''
+        truncated = len(description) > cls.DESCRIPTION_PREVIEW_LIMIT
+        return description[:cls.DESCRIPTION_PREVIEW_LIMIT] + ('…' if truncated else ''), truncated
 
     def search_tickets(
         self,
@@ -396,15 +407,14 @@ class ZendeskClient:
         for t in data.get('results', []):
             if t.get('result_type', 'ticket') != 'ticket':
                 continue
-            description = t.get('description') or ''
-            truncated = len(description) > self.SEARCH_DESCRIPTION_LIMIT
+            description, truncated = self._description_preview(t.get('description'))
             tickets.append({
                 'id': t.get('id'),
                 'subject': t.get('subject'),
                 'status': t.get('status'),
                 'priority': t.get('priority'),
                 'type': t.get('type'),
-                'description': description[:self.SEARCH_DESCRIPTION_LIMIT] + ('…' if truncated else ''),
+                'description': description,
                 'description_truncated': truncated,
                 'created_at': t.get('created_at'),
                 'updated_at': t.get('updated_at'),
