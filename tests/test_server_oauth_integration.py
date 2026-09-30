@@ -6,12 +6,13 @@ differently and could regress independently:
 
 * zenpy reads     — GET through the injected session
 * zenpy writes    — PUT/POST through the injected session
-* direct session  — attachment download
+* direct session  — attachment download, ticket search
 * direct urllib   — get_tickets pagination
 """
 import asyncio
 import json
 import urllib.request
+from urllib.parse import parse_qs, urlparse
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -405,3 +406,104 @@ def test_create_ticket_comment_defaults_to_private(oauth_server):
 
     put = [c.request for c in responses.calls if c.request.method == "PUT"][0]
     assert json.loads(put.body)["ticket"]["comment"]["public"] is False
+
+
+SEARCH_RESULT = {
+    **TICKET_JSON,
+    "result_type": "ticket",
+    "custom_fields": [{"id": 360003415339, "value": "12345"}],
+}
+
+
+@responses.activate
+def test_search_tickets_over_oauth(oauth_server):
+    responses.add(
+        responses.GET,
+        f"{API}/search.json",
+        json={"results": [SEARCH_RESULT], "count": 1, "next_page": None},
+    )
+
+    body = payload_of(call_tool(
+        oauth_server,
+        "search_tickets",
+        {"query": "status<solved requester:jo@example.com custom_field_360003415339:12345"},
+    ))
+
+    request = responses.calls[0].request
+    params = parse_qs(urlparse(request.url).query)
+    assert params["query"] == [
+        "type:ticket status<solved requester:jo@example.com custom_field_360003415339:12345"
+    ]
+    assert params["per_page"] == ["25"]
+    assert "sort_by" not in params, "omitting sort_by keeps Zendesk's relevance ordering"
+    assert request.headers["Authorization"] == BEARER
+    assert body["total"] == 1
+    assert body["has_more"] is False
+    ticket = body["tickets"][0]
+    assert ticket["id"] == 42
+    assert ticket["tags"] == ["hardware"]
+    assert ticket["custom_fields"] == [{"id": 360003415339, "value": "12345"}]
+
+
+@pytest.mark.parametrize(
+    "query, sent",
+    [
+        ("type:ticket FedEx", "type:ticket FedEx"),
+        # ticket_type: is a different keyword and must not suppress type:ticket.
+        ("ticket_type:incident", "type:ticket ticket_type:incident"),
+    ],
+)
+@responses.activate
+def test_search_tickets_adds_type_ticket_only_when_missing(oauth_server, query, sent):
+    responses.add(responses.GET, f"{API}/search.json", json={"results": [], "count": 0})
+
+    call_tool(oauth_server, "search_tickets", {"query": query})
+
+    assert parse_qs(urlparse(responses.calls[0].request.url).query)["query"] == [sent]
+
+
+@responses.activate
+def test_search_tickets_paginates_and_caps_per_page(oauth_server):
+    responses.add(
+        responses.GET,
+        f"{API}/search.json",
+        json={"results": [SEARCH_RESULT], "count": 250, "next_page": f"{API}/search.json?page=3"},
+    )
+
+    body = payload_of(call_tool(
+        oauth_server,
+        "search_tickets",
+        {"query": "FedEx", "page": 2, "per_page": 500, "sort_by": "updated_at", "sort_order": "asc"},
+    ))
+
+    params = parse_qs(urlparse(responses.calls[0].request.url).query)
+    assert params["page"] == ["2"]
+    assert params["per_page"] == ["100"]
+    assert params["sort_by"] == ["updated_at"]
+    assert params["sort_order"] == ["asc"]
+    assert body["has_more"] is True
+    assert body["next_page"] == 3
+    assert body["total"] == 250
+
+
+@responses.activate
+def test_search_tickets_surfaces_zendesk_errors(oauth_server):
+    responses.add(
+        responses.GET,
+        f"{API}/search.json",
+        json={"error": "invalid", "description": "Invalid search: too many results"},
+        status=422,
+    )
+
+    result = call_tool(oauth_server, "search_tickets", {"query": "FedEx", "page": 20, "per_page": 100})
+
+    assert result[0].text.startswith("Error:")
+    assert "422" in result[0].text
+    assert "too many results" in result[0].text
+
+
+def test_search_tickets_requires_a_query(oauth_server):
+    result = call_tool(oauth_server, "search_tickets", {"query": "  "})
+
+    assert result[0].text.startswith("Error:")
+    assert "query is required" in result[0].text

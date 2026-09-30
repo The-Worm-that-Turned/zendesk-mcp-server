@@ -200,6 +200,44 @@ async def handle_list_tools() -> list[types.Tool]:
             }
         ),
         types.Tool(
+            name="search_tickets",
+            description=(
+                "Search tickets using Zendesk search syntax. Use this to find tickets by "
+                "requester, status, custom field, tag or text instead of paging through get_tickets. "
+                "Examples: 'requester:jo@example.com', 'status<solved FedEx', "
+                "'status:pending custom_field_360003415339:12345', 'tags:vip status:open'. "
+                "Terms are ANDed; quote phrases (\"proof of delivery\"). Statuses in order: "
+                "new < open < pending < hold < solved < closed, so 'status<solved' means "
+                "new/open/pending/hold. At most 1,000 results are reachable per query; "
+                "narrow it (e.g. created>2026-01-01) if total exceeds that."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Zendesk search query. type:ticket is added automatically."
+                    },
+                    "page": {"type": "integer", "description": "Page number", "default": 1},
+                    "per_page": {
+                        "type": "integer",
+                        "description": "Results per page (max 100)",
+                        "default": 25
+                    },
+                    "sort_by": {
+                        "type": "string",
+                        "description": "created_at, updated_at, priority, status or ticket_type. Defaults to relevance."
+                    },
+                    "sort_order": {
+                        "type": "string",
+                        "description": "asc or desc",
+                        "default": "desc"
+                    }
+                },
+                "required": ["query"]
+            }
+        ),
+        types.Tool(
             name="get_ticket_comments",
             description="Retrieve all comments for a Zendesk ticket by its ID",
             inputSchema={
@@ -336,6 +374,21 @@ async def handle_call_tool(
             return [types.TextContent(
                 type="text",
                 text=json.dumps(tickets, indent=2)
+            )]
+
+        elif name == "search_tickets":
+            if not arguments:
+                raise ValueError("Missing arguments")
+            results = get_zendesk_client().search_tickets(
+                query=arguments.get("query", ""),
+                page=arguments.get("page", 1),
+                per_page=arguments.get("per_page", 25),
+                sort_by=arguments.get("sort_by"),
+                sort_order=arguments.get("sort_order", "desc"),
+            )
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(results, indent=2)
             )]
 
         elif name == "get_ticket_comments":

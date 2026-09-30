@@ -276,6 +276,24 @@ Fetch the latest tickets with pagination support
 
 - Output: Returns a list of tickets with essential fields including id, subject, status, priority, description, timestamps, and assignee information, along with pagination metadata
 
+### search_tickets
+
+Search tickets using [Zendesk search syntax](https://support.zendesk.com/hc/en-us/articles/4408886879258)
+— by requester, status, custom field, tag or free text.
+
+- Input:
+  - `query` (string): the search query. `type:ticket` is added automatically. Examples:
+    - `requester:jo@example.com`
+    - `status<solved FedEx` (new, open, pending or on-hold tickets mentioning FedEx)
+    - `custom_field_360003415339:12345`
+    - `tags:vip status:open`
+  - `page` (integer, optional): Page number (defaults to 1)
+  - `per_page` (integer, optional): Results per page, max 100 (defaults to 25)
+  - `sort_by` (string, optional): created_at, updated_at, priority, status or ticket_type (defaults to relevance)
+  - `sort_order` (string, optional): asc or desc (defaults to desc)
+
+- Output: matching tickets (including `tags` and `custom_fields`), the `total` number of matches, and pagination metadata. Zendesk returns at most 1,000 results per query, so narrow the query if `total` is larger.
+
 ### get_ticket
 
 Retrieve a Zendesk ticket by its ID, including its `tags`

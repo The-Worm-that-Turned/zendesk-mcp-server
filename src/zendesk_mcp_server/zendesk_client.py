@@ -1,5 +1,6 @@
 from typing import Dict, Any, List
 import json
+import re
 import urllib.request
 import urllib.parse
 import base64
@@ -316,6 +317,79 @@ class ZendeskClient:
             raise Exception(f"Failed to get latest tickets: HTTP {e.code} - {e.reason}. {error_body}")
         except Exception as e:
             raise Exception(f"Failed to get latest tickets: {str(e)}")
+
+    def search_tickets(
+        self,
+        query: str,
+        page: int = 1,
+        per_page: int = 25,
+        sort_by: str | None = None,
+        sort_order: str = 'desc',
+    ) -> Dict[str, Any]:
+        """
+        Search tickets with Zendesk's search syntax, e.g.
+        ``status<solved requester:jo@example.com custom_field_123:ABC FedEx``.
+
+        ``type:ticket`` is added to the query unless it already names a type.
+        Zendesk returns at most 1,000 results per query through this endpoint.
+        """
+        if not query or not query.strip():
+            raise ValueError("query is required")
+        query = query.strip()
+        if not re.search(r'(^|\s)type:', query):
+            query = f"type:ticket {query}"
+        per_page = min(per_page, 100)
+
+        params = {
+            'query': query,
+            'page': page,
+            'per_page': per_page,
+            'sort_order': sort_order,
+        }
+        if sort_by:
+            params['sort_by'] = sort_by
+
+        try:
+            response = self.session.get(f"{self.base_url}/search.json", params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+        except _requests.HTTPError as e:
+            raise Exception(
+                f"Failed to search tickets: HTTP {e.response.status_code} - {e.response.text}"
+            )
+        except Exception as e:
+            raise Exception(f"Failed to search tickets: {str(e)}")
+
+        tickets = [
+            {
+                'id': t.get('id'),
+                'subject': t.get('subject'),
+                'status': t.get('status'),
+                'priority': t.get('priority'),
+                'type': t.get('type'),
+                'description': t.get('description'),
+                'created_at': t.get('created_at'),
+                'updated_at': t.get('updated_at'),
+                'requester_id': t.get('requester_id'),
+                'assignee_id': t.get('assignee_id'),
+                'organization_id': t.get('organization_id'),
+                'tags': t.get('tags') or [],
+                'custom_fields': t.get('custom_fields') or [],
+            }
+            for t in data.get('results', [])
+            if t.get('result_type', 'ticket') == 'ticket'
+        ]
+
+        return {
+            'query': query,
+            'tickets': tickets,
+            'total': data.get('count'),
+            'page': page,
+            'per_page': per_page,
+            'count': len(tickets),
+            'has_more': data.get('next_page') is not None,
+            'next_page': page + 1 if data.get('next_page') else None,
+        }
 
     def get_all_articles(self) -> Dict[str, Any]:
         """
