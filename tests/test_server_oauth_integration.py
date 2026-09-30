@@ -189,6 +189,83 @@ def test_update_ticket_over_oauth(oauth_server):
 
 
 @responses.activate
+def test_update_ticket_add_tags_keeps_existing_tags(oauth_server):
+    """add_tags uses the tag endpoint rather than overwriting the ticket's tag list."""
+    tagged = {**TICKET_JSON, "tags": ["hardware", "claude-draft-review"]}
+    responses.add(responses.PUT, f"{API}/tickets/42/tags.json", json={"tags": tagged["tags"]})
+    responses.add(responses.GET, f"{API}/tickets/42.json", json={"ticket": tagged})
+
+    body = payload_of(
+        call_tool(oauth_server, "update_ticket", {"ticket_id": 42, "add_tags": ["claude-draft-review"]})
+    )
+
+    tag_put = [c.request for c in responses.calls if c.request.url.endswith("/tickets/42/tags.json")][0]
+    assert tag_put.method == "PUT"
+    assert json.loads(tag_put.body) == {"tags": ["claude-draft-review"]}
+    # No full-ticket PUT, so the existing tags are never overwritten.
+    assert not [c for c in responses.calls if c.request.method == "PUT" and c.request.url.endswith("/tickets/42.json")]
+    assert body["ticket"]["tags"] == ["hardware", "claude-draft-review"]
+    assert set(authorization_headers()) == {BEARER}
+
+
+@responses.activate
+def test_update_ticket_remove_tags_uses_tag_endpoint(oauth_server):
+    responses.add(responses.DELETE, f"{API}/tickets/42/tags.json", json={"tags": []})
+    responses.add(responses.GET, f"{API}/tickets/42.json", json={"ticket": {**TICKET_JSON, "tags": []}})
+
+    body = payload_of(
+        call_tool(oauth_server, "update_ticket", {"ticket_id": 42, "remove_tags": ["hardware"]})
+    )
+
+    tag_delete = [c.request for c in responses.calls if c.request.method == "DELETE"][0]
+    assert tag_delete.url == f"{API}/tickets/42/tags.json"
+    assert json.loads(tag_delete.body) == {"tags": ["hardware"]}
+    assert body["ticket"]["tags"] == []
+
+
+@responses.activate
+def test_update_ticket_fields_and_add_tags_together(oauth_server):
+    """Field changes go through the ticket PUT; tag additions through the tag endpoint."""
+    responses.add(responses.GET, f"{API}/tickets/42.json", json={"ticket": TICKET_JSON})
+    responses.add(
+        responses.PUT,
+        f"{API}/tickets/42.json",
+        json={"ticket": TICKET_JSON, "audit": {"id": 1, "ticket_id": 42, "events": []}},
+    )
+    responses.add(responses.PUT, f"{API}/tickets/42/tags.json", json={"tags": ["hardware", "vip"]})
+
+    payload_of(
+        call_tool(oauth_server, "update_ticket", {"ticket_id": 42, "status": "pending", "add_tags": ["vip"]})
+    )
+
+    ticket_put = [c.request for c in responses.calls
+                  if c.request.method == "PUT" and c.request.url.endswith("/tickets/42.json")][0]
+    sent = json.loads(ticket_put.body)["ticket"]
+    assert sent["status"] == "pending"
+    assert "tags" not in sent
+    tag_put = [c.request for c in responses.calls if c.request.url.endswith("/tickets/42/tags.json")][0]
+    assert json.loads(tag_put.body) == {"tags": ["vip"]}
+
+
+@pytest.mark.parametrize(
+    "arguments, message",
+    [
+        ({"tags": ["a"], "add_tags": ["b"]}, "tags cannot be combined"),
+        ({"tags": ["a"], "remove_tags": ["b"]}, "tags cannot be combined"),
+        ({"add_tags": ["a", "b"], "remove_tags": ["b"]}, "both added and removed: b"),
+    ],
+)
+@responses.activate
+def test_update_ticket_rejects_conflicting_tag_arguments(oauth_server, arguments, message):
+    result = call_tool(oauth_server, "update_ticket", {"ticket_id": 42, **arguments})
+
+    assert result[0].text.startswith("Error:")
+    assert message in result[0].text
+    # Rejected before anything is sent to Zendesk.
+    assert len(responses.calls) == 0
+
+
+@responses.activate
 def test_create_ticket_over_oauth(oauth_server):
     responses.add(
         responses.POST,

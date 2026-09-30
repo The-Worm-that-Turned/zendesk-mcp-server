@@ -325,6 +325,8 @@ Update fields on an existing Zendesk ticket (e.g., status, priority, assignee)
   - `type` (string, optional)
   - `assignee_id` (integer, optional)
   - `requester_id` (integer, optional)
-  - `tags` (array[string], optional)
+  - `tags` (array[string], optional): replaces **all** existing tags on the ticket
+  - `add_tags` (array[string], optional): tags to add, keeping existing tags. Cannot be combined with `tags`
+  - `remove_tags` (array[string], optional): tags to remove, keeping other tags. Cannot be combined with `tags`
   - `custom_fields` (array[object], optional)
   - `due_at` (string, optional): ISO8601 datetime
