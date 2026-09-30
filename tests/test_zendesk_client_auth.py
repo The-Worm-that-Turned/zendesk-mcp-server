@@ -13,6 +13,7 @@ import urllib.request
 import pytest
 import responses
 
+from pdf_samples import text_pdf
 from zendesk_mcp_server.zendesk_client import ZendeskClient
 
 SUBDOMAIN = "example"
@@ -114,3 +115,34 @@ def test_get_ticket_attachment_rejects_spoofed_magic_bytes(client):
 
     with pytest.raises(ValueError, match="does not match declared content type"):
         client.get_ticket_attachment(ATTACHMENT_URL)
+
+
+PDF_URL = "https://example.zendesk.com/attachments/token/abc/?name=SO%20695667.pdf"
+
+
+@pytest.mark.parametrize("declared", ["application/pdf", "application/octet-stream"])
+@responses.activate
+def test_get_ticket_attachment_accepts_pdfs(client, declared):
+    body = text_pdf("SO 695667")
+    responses.add(responses.GET, PDF_URL, body=body, content_type=declared)
+
+    result = client.get_ticket_attachment(PDF_URL)
+
+    assert result["content_type"] == "application/pdf"
+    assert base64.b64decode(result["data"]) == body
+
+
+@responses.activate
+def test_get_ticket_attachment_rejects_octet_stream_that_is_not_a_pdf(client):
+    responses.add(responses.GET, PDF_URL, body=b"MZ\x90\x00binary", content_type="application/octet-stream")
+
+    with pytest.raises(ValueError, match="only supported for PDF"):
+        client.get_ticket_attachment(PDF_URL)
+
+
+@responses.activate
+def test_get_ticket_attachment_rejects_spoofed_pdf(client):
+    responses.add(responses.GET, PDF_URL, body=b"<html>not a pdf</html>", content_type="application/pdf")
+
+    with pytest.raises(ValueError, match="does not match declared content type"):
+        client.get_ticket_attachment(PDF_URL)

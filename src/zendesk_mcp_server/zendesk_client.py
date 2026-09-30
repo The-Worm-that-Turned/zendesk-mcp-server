@@ -154,8 +154,9 @@ class ZendeskClient:
         except Exception as e:
             raise Exception(f"Failed to get comments for ticket {ticket_id}: {str(e)}")
 
-    # Allowed image MIME types. SVG is excluded — it can contain active XML/JS content.
-    _ALLOWED_IMAGE_TYPES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
+    # Allowed MIME types. SVG is excluded — it can contain active XML/JS content.
+    # PDFs are parsed server-side and returned as text and page images.
+    _ALLOWED_ATTACHMENT_TYPES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'}
 
     # Magic bytes (file signatures) for each allowed type.
     _MAGIC_BYTES: Dict[str, List[bytes]] = {
@@ -163,6 +164,7 @@ class ZendeskClient:
         'image/png':  [b'\x89PNG\r\n\x1a\n'],
         'image/gif':  [b'GIF87a', b'GIF89a'],
         'image/webp': [b'RIFF'],  # RIFF....WEBP — checked further below
+        'application/pdf': [b'%PDF-'],
     }
 
     # 10 MB hard cap to guard against image bombs and token budget blowout.
@@ -170,10 +172,12 @@ class ZendeskClient:
 
     def get_ticket_attachment(self, content_url: str) -> Dict[str, Any]:
         """
-        Fetch an image attachment and return base64-encoded data.
+        Fetch an image or PDF attachment and return base64-encoded data.
 
         Security measures applied:
-        - Allowlist of safe image MIME types (no SVG or arbitrary binary).
+        - Allowlist of safe image MIME types plus PDF (no SVG or arbitrary binary).
+          A generic application/octet-stream is accepted only if the file is a PDF,
+          since mail clients often attach PDFs with that type.
         - Magic byte validation so the file header must match the declared type.
         - 10 MB size cap to prevent image bombs and excessive token usage.
 
@@ -193,10 +197,11 @@ class ZendeskClient:
 
             content_type = response.headers.get('Content-Type', '').split(';')[0].strip().lower()
 
-            if content_type not in self._ALLOWED_IMAGE_TYPES:
+            sniff_pdf = content_type == 'application/octet-stream'
+            if content_type not in self._ALLOWED_ATTACHMENT_TYPES and not sniff_pdf:
                 raise ValueError(
                     f"Attachment type '{content_type}' is not allowed. "
-                    f"Supported types: {sorted(self._ALLOWED_IMAGE_TYPES)}"
+                    f"Supported types: {sorted(self._ALLOWED_ATTACHMENT_TYPES)}"
                 )
 
             # Read with size cap — stops download as soon as limit is exceeded.
@@ -210,6 +215,13 @@ class ZendeskClient:
                     )
                 chunks.append(chunk)
             content = b''.join(chunks)
+
+            if sniff_pdf:
+                if not content.startswith(b'%PDF-'):
+                    raise ValueError(
+                        "Attachment type 'application/octet-stream' is only supported for PDF files."
+                    )
+                content_type = 'application/pdf'
 
             # Validate magic bytes to catch MIME type spoofing.
             magic_signatures = self._MAGIC_BYTES.get(content_type, [])

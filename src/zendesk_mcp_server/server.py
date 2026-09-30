@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import logging
 from typing import Any, Dict
@@ -11,6 +12,7 @@ from mcp.server.stdio import stdio_server
 from pydantic import AnyUrl
 
 from zendesk_mcp_server.factory import build_client
+from zendesk_mcp_server.pdf import MAX_PAGES, read_pdf
 from zendesk_mcp_server.zendesk_client import ZendeskClient
 
 logging.basicConfig(
@@ -284,13 +286,26 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_ticket_attachment",
-            description="Fetch a Zendesk ticket attachment by its content_url and return the file as base64-encoded data. Use the attachment URLs returned by get_ticket_comments.",
+            description=(
+                "Fetch a Zendesk ticket attachment by its content_url. Use the attachment URLs "
+                "returned by get_ticket_comments. Images (JPEG, PNG, GIF, WebP) are returned as images. "
+                f"PDFs are returned as extracted text per page (first {MAX_PAGES} pages); pages with "
+                "no text layer, such as scanned documents, are returned as page images."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "content_url": {
                         "type": "string",
                         "description": "The content_url of the attachment from get_ticket_comments"
+                    },
+                    "render_pages": {
+                        "type": "boolean",
+                        "description": (
+                            "PDFs only: also return every page as an image. Use when layout matters "
+                            "(tables, stamps, signatures) or the extracted text looks garbled."
+                        ),
+                        "default": False
                     }
                 },
                 "required": ["content_url"]
@@ -326,6 +341,25 @@ async def handle_list_tools() -> list[types.Tool]:
             }
         )
     ]
+
+
+def pdf_tool_content(data: bytes, render_pages: bool) -> list[types.TextContent | types.ImageContent]:
+    """Each page's text, followed by its image when it was rendered."""
+    pdf = read_pdf(data, render_pages=render_pages)
+    summary = f"PDF with {pdf.page_count} page(s)."
+    if pdf.truncated:
+        summary += f" Only the first {len(pdf.pages)} are included."
+    content: list[types.TextContent | types.ImageContent] = [types.TextContent(type="text", text=summary)]
+    for page in pdf.pages:
+        text = page.text or "(no text layer; see the page image)"
+        content.append(types.TextContent(type="text", text=f"--- Page {page.number} ---\n{text}"))
+        if page.png:
+            content.append(types.ImageContent(
+                type="image",
+                data=base64.b64encode(page.png).decode("ascii"),
+                mimeType="image/png",
+            ))
+    return content
 
 
 @server.call_tool()
@@ -423,6 +457,11 @@ async def handle_call_tool(
                 raise ValueError("Missing arguments")
             result = get_zendesk_client().get_ticket_attachment(arguments["content_url"])
             content_type = result["content_type"]
+            if content_type == "application/pdf":
+                return pdf_tool_content(
+                    base64.b64decode(result["data"]),
+                    render_pages=bool(arguments.get("render_pages", False)),
+                )
             if content_type.startswith("image/"):
                 return [types.ImageContent(
                     type="image",

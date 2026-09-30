@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import responses
 
+from pdf_samples import scanned_pdf, text_pdf
 from zendesk_mcp_server.tokens import TokenSet, TokenStore
 
 SUBDOMAIN = "example"
@@ -581,3 +582,52 @@ def test_search_tickets_truncates_long_descriptions(oauth_server):
     assert tickets[0]["description_truncated"] is True
     assert tickets[1]["description"] == "short"
     assert tickets[1]["description_truncated"] is False
+
+
+PDF_URL = f"https://{SUBDOMAIN}.zendesk.com/attachments/token/def/?name=SO%20695667.pdf"
+
+
+@responses.activate
+def test_get_ticket_attachment_returns_pdf_text(oauth_server):
+    responses.add(
+        responses.GET,
+        PDF_URL,
+        body=text_pdf("SO 695667 Ship to Elstead Garden Centre", "Line 1 Tall Planter Grey x 2"),
+        content_type="application/pdf",
+    )
+
+    result = call_tool(oauth_server, "get_ticket_attachment", {"content_url": PDF_URL})
+
+    assert [c.type for c in result] == ["text", "text", "text"]
+    assert result[0].text == "PDF with 2 page(s)."
+    assert result[1].text == "--- Page 1 ---\nSO 695667 Ship to Elstead Garden Centre"
+    assert result[2].text == "--- Page 2 ---\nLine 1 Tall Planter Grey x 2"
+    assert responses.calls[0].request.headers["Authorization"] == BEARER
+
+
+@responses.activate
+def test_get_ticket_attachment_renders_scanned_pdf_pages(oauth_server):
+    responses.add(responses.GET, PDF_URL, body=scanned_pdf(), content_type="application/pdf")
+
+    result = call_tool(oauth_server, "get_ticket_attachment", {"content_url": PDF_URL})
+
+    assert [c.type for c in result] == ["text", "text", "image"]
+    assert "no text layer" in result[1].text
+    assert result[2].mimeType == "image/png"
+
+
+@responses.activate
+def test_get_ticket_attachment_render_pages_adds_images(oauth_server):
+    responses.add(
+        responses.GET,
+        PDF_URL,
+        body=text_pdf("SO 695667 Ship to Elstead Garden Centre"),
+        content_type="application/pdf",
+    )
+
+    result = call_tool(
+        oauth_server, "get_ticket_attachment", {"content_url": PDF_URL, "render_pages": True}
+    )
+
+    assert [c.type for c in result] == ["text", "text", "image"]
+    assert "SO 695667" in result[1].text

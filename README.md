@@ -311,6 +311,19 @@ Retrieve all comments for a Zendesk ticket by its ID
 - Input:
   - `ticket_id` (integer): The ID of the ticket to get comments for
 
+### get_ticket_attachment
+
+Fetch a ticket attachment using a `content_url` from `get_ticket_comments`
+
+- Input:
+  - `content_url` (string): The attachment's `content_url`
+  - `render_pages` (boolean, optional): PDFs only — also return every page as an image, for when layout matters or the text looks garbled (defaults to false)
+
+- Output:
+  - Images (JPEG, PNG, GIF, WebP) are returned as images.
+  - PDFs are returned as extracted text, page by page (first 20 pages). Pages with no text layer, such as scans, are returned as page images. PDFs sent as `application/octet-stream` are recognised by their file header.
+  - Other types (including SVG) are refused, and attachments over 10 MB are rejected.
+
 ### create_ticket_comment
 
 Create a new comment on an existing Zendesk ticket
