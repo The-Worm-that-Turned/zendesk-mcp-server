@@ -513,3 +513,71 @@ def test_search_tickets_requires_a_query(oauth_server):
 
     assert result[0].text.startswith("Error:")
     assert "query is required" in result[0].text
+
+
+@pytest.mark.parametrize(
+    "query, sent",
+    [
+        ("status&lt;solved FedEx", "type:ticket status<solved FedEx"),
+        ("created&gt;2026-01-01", "type:ticket created>2026-01-01"),
+        # Escaped twice over is still decoded fully.
+        ("status&amp;lt;solved", "type:ticket status<solved"),
+    ],
+)
+@responses.activate
+def test_search_tickets_decodes_html_entities(oauth_server, query, sent):
+    """An escaped operator makes Zendesk search for the literal text and quietly match nothing."""
+    responses.add(responses.GET, f"{API}/search.json", json={"results": [], "count": 0})
+
+    body = payload_of(call_tool(oauth_server, "search_tickets", {"query": query}))
+
+    assert parse_qs(urlparse(responses.calls[0].request.url).query)["query"] == [sent]
+    assert body["query"] == sent
+
+
+NOISY_CUSTOM_FIELDS = [
+    {"id": 1, "value": "DD-100"},
+    {"id": 2, "value": None},
+    {"id": 3, "value": ""},
+    {"id": 4, "value": []},
+    {"id": 5, "value": False},
+    {"id": 6, "value": None},
+]
+
+
+@responses.activate
+def test_search_tickets_drops_empty_custom_fields(oauth_server):
+    result = {**SEARCH_RESULT, "custom_fields": NOISY_CUSTOM_FIELDS}
+    responses.add(responses.GET, f"{API}/search.json", json={"results": [result], "count": 1})
+
+    body = payload_of(call_tool(oauth_server, "search_tickets", {"query": "FedEx"}))
+
+    # False is a real checkbox value, so it is kept.
+    assert body["tickets"][0]["custom_fields"] == [{"id": 1, "value": "DD-100"}, {"id": 5, "value": False}]
+
+
+@responses.activate
+def test_search_tickets_limits_custom_fields_to_requested_ids(oauth_server):
+    result = {**SEARCH_RESULT, "custom_fields": NOISY_CUSTOM_FIELDS}
+    responses.add(responses.GET, f"{API}/search.json", json={"results": [result], "count": 1})
+
+    body = payload_of(call_tool(
+        oauth_server, "search_tickets", {"query": "FedEx", "custom_field_ids": [1, 6]}
+    ))
+
+    # Requested fields are returned even when empty, so a missing value is visible.
+    assert body["tickets"][0]["custom_fields"] == [{"id": 1, "value": "DD-100"}, {"id": 6, "value": None}]
+
+
+@responses.activate
+def test_search_tickets_truncates_long_descriptions(oauth_server):
+    long = {**SEARCH_RESULT, "id": 1, "description": "x" * 1000}
+    short = {**SEARCH_RESULT, "id": 2, "description": "short"}
+    responses.add(responses.GET, f"{API}/search.json", json={"results": [long, short], "count": 2})
+
+    tickets = payload_of(call_tool(oauth_server, "search_tickets", {"query": "FedEx"}))["tickets"]
+
+    assert tickets[0]["description"] == "x" * 300 + "…"
+    assert tickets[0]["description_truncated"] is True
+    assert tickets[1]["description"] == "short"
+    assert tickets[1]["description_truncated"] is False

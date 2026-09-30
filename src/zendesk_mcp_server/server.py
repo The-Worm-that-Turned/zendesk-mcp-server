@@ -209,7 +209,10 @@ async def handle_list_tools() -> list[types.Tool]:
                 "Terms are ANDed; quote phrases (\"proof of delivery\"). Statuses in order: "
                 "new < open < pending < hold < solved < closed, so 'status<solved' means "
                 "new/open/pending/hold. At most 1,000 results are reachable per query; "
-                "narrow it (e.g. created>2026-01-01) if total exceeds that."
+                "narrow it (e.g. created>2026-01-01) if total exceeds that. "
+                "Write operators as plain characters (status<solved), not HTML entities. "
+                "Descriptions are previews; use get_ticket or get_ticket_comments for full text. "
+                "Custom fields without a value are omitted unless listed in custom_field_ids."
             ),
             inputSchema={
                 "type": "object",
@@ -232,6 +235,11 @@ async def handle_list_tools() -> list[types.Tool]:
                         "type": "string",
                         "description": "asc or desc",
                         "default": "desc"
+                    },
+                    "custom_field_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Only return these custom fields (including empty ones). Omit to get every custom field that has a value."
                     }
                 },
                 "required": ["query"]
@@ -380,10 +388,11 @@ async def handle_call_tool(
                 per_page=arguments.get("per_page", 25),
                 sort_by=arguments.get("sort_by"),
                 sort_order=arguments.get("sort_order", "desc"),
+                custom_field_ids=arguments.get("custom_field_ids"),
             )
             return [types.TextContent(
                 type="text",
-                text=json.dumps(results, indent=2)
+                text=json.dumps(results)
             )]
 
         elif name == "get_ticket_comments":

@@ -1,4 +1,5 @@
 from typing import Dict, Any, List
+import html
 import json
 import re
 import urllib.request
@@ -318,6 +319,8 @@ class ZendeskClient:
         except Exception as e:
             raise Exception(f"Failed to get latest tickets: {str(e)}")
 
+    SEARCH_DESCRIPTION_LIMIT = 300
+
     def search_tickets(
         self,
         query: str,
@@ -325,6 +328,7 @@ class ZendeskClient:
         per_page: int = 25,
         sort_by: str | None = None,
         sort_order: str = 'desc',
+        custom_field_ids: List[int] | None = None,
     ) -> Dict[str, Any]:
         """
         Search tickets with Zendesk's search syntax, e.g.
@@ -332,9 +336,18 @@ class ZendeskClient:
 
         ``type:ticket`` is added to the query unless it already names a type.
         Zendesk returns at most 1,000 results per query through this endpoint.
+
+        Results are kept small enough to page through: descriptions are cut to
+        a preview, and custom fields are limited to ``custom_field_ids`` when
+        given, otherwise to the fields that have a value.
         """
         if not query or not query.strip():
             raise ValueError("query is required")
+        # Models sometimes HTML-escape operators (status&lt;solved). Zendesk
+        # then searches for the literal text and quietly matches nothing.
+        unescaped = html.unescape(query)
+        while unescaped != query:
+            query, unescaped = unescaped, html.unescape(unescaped)
         query = query.strip()
         if not re.search(r'(^|\s)type:', query):
             query = f"type:ticket {query}"
@@ -360,25 +373,35 @@ class ZendeskClient:
         except Exception as e:
             raise Exception(f"Failed to search tickets: {str(e)}")
 
-        tickets = [
-            {
+        wanted_fields = {int(i) for i in custom_field_ids} if custom_field_ids else None
+
+        def slim_custom_fields(fields):
+            if wanted_fields is not None:
+                return [f for f in fields if f.get('id') in wanted_fields]
+            return [f for f in fields if f.get('value') not in (None, '', [])]
+
+        tickets = []
+        for t in data.get('results', []):
+            if t.get('result_type', 'ticket') != 'ticket':
+                continue
+            description = t.get('description') or ''
+            truncated = len(description) > self.SEARCH_DESCRIPTION_LIMIT
+            tickets.append({
                 'id': t.get('id'),
                 'subject': t.get('subject'),
                 'status': t.get('status'),
                 'priority': t.get('priority'),
                 'type': t.get('type'),
-                'description': t.get('description'),
+                'description': description[:self.SEARCH_DESCRIPTION_LIMIT] + ('…' if truncated else ''),
+                'description_truncated': truncated,
                 'created_at': t.get('created_at'),
                 'updated_at': t.get('updated_at'),
                 'requester_id': t.get('requester_id'),
                 'assignee_id': t.get('assignee_id'),
                 'organization_id': t.get('organization_id'),
                 'tags': t.get('tags') or [],
-                'custom_fields': t.get('custom_fields') or [],
-            }
-            for t in data.get('results', [])
-            if t.get('result_type', 'ticket') == 'ticket'
-        ]
+                'custom_fields': slim_custom_fields(t.get('custom_fields') or []),
+            })
 
         return {
             'query': query,

@@ -291,8 +291,11 @@ Search tickets using [Zendesk search syntax](https://support.zendesk.com/hc/en-u
   - `per_page` (integer, optional): Results per page, max 100 (defaults to 25)
   - `sort_by` (string, optional): created_at, updated_at, priority, status or ticket_type (defaults to relevance)
   - `sort_order` (string, optional): asc or desc (defaults to desc)
+  - `custom_field_ids` (array[integer], optional): only return these custom fields, including empty ones. Omit to get every custom field that has a value.
 
-- Output: matching tickets (including `tags` and `custom_fields`), the `total` number of matches, and pagination metadata. Zendesk returns at most 1,000 results per query, so narrow the query if `total` is larger.
+- Output: matching tickets (including `tags` and `custom_fields`), the `total` number of matches, and pagination metadata. To keep pages small, `description` is a 300-character preview (`description_truncated` says whether it was cut; use `get_ticket` for the full text) and custom fields without a value are left out. Zendesk returns at most 1,000 results per query, so narrow the query if `total` is larger.
+
+  HTML entities in the query (`status&lt;solved`) are decoded before it is sent, since Zendesk would otherwise search for the literal text and match nothing.
 
 ### get_ticket
 
