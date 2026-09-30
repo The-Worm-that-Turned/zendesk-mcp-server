@@ -98,7 +98,18 @@ def test_get_ticket_over_oauth(oauth_server):
 
     assert ticket["id"] == 42
     assert ticket["subject"] == "Printer on fire"
+    assert ticket["tags"] == ["hardware"]
     assert authorization_headers() == [BEARER]
+
+
+@responses.activate
+def test_get_ticket_without_tags_returns_empty_list(oauth_server):
+    untagged = {**TICKET_JSON, "tags": []}
+    responses.add(responses.GET, f"{API}/tickets/42.json", json={"ticket": untagged})
+
+    ticket = payload_of(call_tool(oauth_server, "get_ticket", {"ticket_id": 42}))
+
+    assert ticket["tags"] == []
 
 
 @responses.activate

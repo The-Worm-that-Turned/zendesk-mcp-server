@@ -278,7 +278,7 @@ Fetch the latest tickets with pagination support
 
 ### get_ticket
 
-Retrieve a Zendesk ticket by its ID
+Retrieve a Zendesk ticket by its ID, including its `tags`
 
 - Input:
   - `ticket_id` (integer): The ID of the ticket to retrieve
